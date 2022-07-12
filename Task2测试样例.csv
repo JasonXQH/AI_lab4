@@ -1,0 +1,370 @@
+id,language,code,docstring
+1,python,"def preprocess_examples(examples):
+  # encode the code-docstring pairs
+  codes = examples['code']
+  docstrings = examples['docstring']
+  
+  inputs = [prefix + code for code in codes]
+  model_inputs = tokenizer(inputs, max_length=max_input_length, padding=""max_length"", truncation=True)
+
+  # encode the summaries
+  labels = tokenizer(docstrings, max_length=max_target_length, padding=""max_length"", truncation=True).input_ids
+
+  # important: we need to replace the index of the padding tokens by -100
+  # such that they are not taken into account by the CrossEntropyLoss
+  labels_with_ignore_index = []
+  for labels_example in labels:
+    labels_example = [label if label != 0 else -100 for label in labels_example]
+    labels_with_ignore_index.append(labels_example)
+  
+  model_inputs[""labels""] = labels_with_ignore_index
+
+  return model_inputs",数据预处理函数
+2,python,"from datasets import load_dataset
+
+dataset = load_dataset(""code_x_glue_ct_code_to_text"", ""ruby"")
+print(dataset)
+",导入数据库
+3,python,"from torch.utils.data import DataLoader
+
+dataset.set_format(type=""torch"", columns=['input_ids', 'attention_mask', 'labels'])
+train_dataloader = DataLoader(dataset['train'], shuffle=True, batch_size=8)
+valid_dataloader = DataLoader(dataset['validation'], batch_size=4)
+test_dataloader = DataLoader(dataset['test'], batch_size=4)",定义训练集、验证集、测试集
+4,python,"class CodeT5(pl.LightningModule):
+    def __init__(self, lr=5e-5, num_train_epochs=15, warmup_steps=1000):
+        super().__init__()
+        self.model = T5ForConditionalGeneration.from_pretrained(""Salesforce/codet5-small"")
+        self.save_hyperparameters()
+
+    def forward(self, input_ids, attention_mask, labels=None):     
+        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+        return outputs
+    
+    def common_step(self, batch, batch_idx):
+        outputs = self(**batch)
+        loss = outputs.loss
+
+        return loss
+      
+    def training_step(self, batch, batch_idx):
+        loss = self.common_step(batch, batch_idx)     
+        # logs metrics for each training_step,
+        # and the average across the epoch
+        self.log(""training_loss"", loss)
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss = self.common_step(batch, batch_idx)     
+        self.log(""validation_loss"", loss, on_epoch=True)
+
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        loss = self.common_step(batch, batch_idx)     
+
+        return loss
+
+    def configure_optimizers(self):
+        # create optimizer
+        optimizer = AdamW(self.parameters(), lr=self.hparams.lr)
+        # create learning rate scheduler
+        num_train_optimization_steps = self.hparams.num_train_epochs * len(train_dataloader)
+        lr_scheduler = {'scheduler': get_linear_schedule_with_warmup(optimizer,
+                                                    num_warmup_steps=self.hparams.warmup_steps,
+                                                    num_training_steps=num_train_optimization_steps),
+                        'name': 'learning_rate',
+                        'interval':'step',
+                        'frequency': 1}
+        
+        return {""optimizer"": optimizer, ""lr_scheduler"": lr_scheduler}
+
+    def train_dataloader(self):
+        return train_dataloader
+
+    def val_dataloader(self):
+        return valid_dataloader
+
+    def test_dataloader(self):
+        return test_dataloader
+        ",定义模型
+5,python,"wandb_logger = WandbLogger(name='codet5-finetune-code-summarization-ruby-shuffle', project='CodeT5')
+# for early stopping, see https://pytorch-lightning.readthedocs.io/en/1.0.0/early_stopping.html?highlight=early%20stopping
+early_stop_callback = EarlyStopping(
+    monitor='validation_loss',
+    patience=3,
+    strict=False,
+    verbose=False,
+    mode='min'
+)
+lr_monitor = LearningRateMonitor(logging_interval='step')
+
+trainer = Trainer(gpus=1, 
+                  default_root_dir=""/content/drive/MyDrive/CodeT5/Notebooks/Checkpoints"", 
+                  logger=wandb_logger, 
+                  callbacks=[early_stop_callback, lr_monitor])
+trainer.fit(model)",训练模型
+6,python,"def test_BLEU_Score (test_example):
+  correct_doc = re.sub('[\W_]+', ' ', test_example['docstring'])
+  ref = [
+      correct_doc.split(), 
+      test_example['docstring'].split()
+  ]
+  input_ids = tokenizer(test_example['code'], return_tensors='pt').input_ids
+  outputs = model.generate(input_ids)
+  outputs =  tokenizer.decode(outputs[0], skip_special_tokens=True).lower()
+  outputs = re.sub('[\W_]+', ' ', outputs)
+  print(""outputs: ""+outputs)
+  print(""ref: ""+correct_doc)
+  print('BLEU score for test-> {}'.format(sentence_bleu(ref, outputs.split())))
+  answer.append(sentence_bleu(ref, outputs.split()))
+test_BLEU_Score(dataset[""test""][110])","计算BLEU分数，评估模型性能
+"
+7,python,"def test_pythoncode (test_example):
+  input_ids = tokenizer(test_example, return_tensors='pt').input_ids
+  outputs = model.generate(input_ids)
+  outputs =  tokenizer.decode(outputs[0], skip_special_tokens=True).lower()
+  # outputs = re.sub('[\W_]+', ' ', outputs)
+  print(""outputs: ""+outputs)",测试python代码函数
+8,javascript,"export default function Header() {
+  return (
+    <>
+       <div className=""pt-4"">
+        <WalletBar />
+      </div>
+      <EthRates />
+      <div className=""flex flex-row-reverse p-4 sm:px-6 lg:px-8"">
+      <Breadcrumbs items={LINKS} />
+      </div>
+    </>
+  )
+}",网页header
+9,javascript,"export function getStaticProps() {
+  const { data } = getAllParkings()
+  return {
+    props: {
+      parkings: data
+    }
+  }
+}
+",渲染data数据
+10,javascript,"export default function  ParkingSpaceList({locked,mall,parkings}) {  
+  const { web3, contract } = useWeb3() 
+  const { account } = useWalletInfo()
+  const [selectedNumber, setSelectedNumber] = useState(null)
+  const { parkingPool } = useParkingPool(parkings,account.data)
+  
+  var parkNumber = mall.id+selectedNumber
+  var afterFiltered = parkingPool.data? parkingPool.data.filter(ob=>ob.mallid==mall.id):undefined
+  const bookParking = async order => {
+    const hexParkId =Web3Utils.utf8ToHex(parkNumber)
+    // exp: hexParkId: 0x303141303033
+
+    const orderHash = Web3Utils.soliditySha3(
+      { type: ""bytes16"", value: hexParkId },
+      { type: ""address"", value: account.data }
+    )
+
+    const phoneNumberHash = Web3Utils.sha3(order.number)
+    const proof = Web3Utils.soliditySha3(
+      { type: ""bytes32"", value: phoneNumberHash },
+      { type: ""bytes32"", value: orderHash }
+    )
+
+    const value = web3.utils.toWei(String(order.price))
+
+    try {
+      const result =  contract.methods.bookPark(
+        hexParkId,
+        proof
+      ).send({from: account.data, value})
+    } catch {
+      console.error(""Purchase course: Operation has failed."")
+    }
+  }",预定车位函数
+11,javascript,"export const handler = (web3, contract) => (parkings, account) => {
+    var normaledALLParkings = []
+    const swrRes = useSWR(() =>
+      (web3 && contract && account) ? ""web3/ownedParkings/${account}"" : null,
+
+      async () => {
+        const parkingPool = await contract.methods.getParkingPool().call()
+
+        
+        for(let i = 0;i< parkingPool.length;i++){
+            const parking = parkingPool[i]
+            var parkNumber = Web3Utils.hexToUtf8(parking.parkNumber)
+            var mallid = parseInt(parkNumber.substring(0,2))
+            var location = parkNumber.substring(2)
+            var normal = {
+                mallid: mallid,
+                location: location,
+                owner: parking.owner, 
+                state: PARK_STATES[parseInt(parking.state)]
+              } 
+            normaledALLParkings.push(normal)
+        }
+        // if(n)
+        return normaledALLParkings
+      }
+    )
+  
+    return swrRes
+}",获取车位信息
+12,javascript,"export const handler = (web3, contract) => (parkings, account) => {
+    const swrRes = useSWR(() =>
+      (web3 && contract && account) ? ""web3/ownedParkings/${account}"" : null,
+      async () => {
+        const ownedParkings = await contract.methods.getOwnedParkList().call()
+        const normaledOwnedParkings = []
+        for (let i = 0; i < ownedParkings.length; i++) {
+          var parking = ownedParkings[i]
+          if(parking.owner!=account){continue}
+          var parkNumber = Web3Utils.hexToUtf8(parking.parkNumber)
+          var mallName = MALL_NUMBER[parseInt(parkNumber.substring(0,2))]
+          var location = parkNumber.substring(2)
+          var timeing_hour =  (Math.round(((new Date()).getTime() / 1000)-parking.startTimeStamp)/3600).toFixed(2);
+          var days  = Math.floor(timeing_hour/24)
+          var hours = timeing_hour%24
+          console.log(""days:""+days)
+          var cumulative_cost = days*150+hours >10 ? 150 : Math.round(timeing_hour)*15
+          var normal = {
+            mallNumber: parseInt(parkNumber.substring(0,2)),
+            mallString: parkNumber.substring(0,2),
+            mallName: mallName,
+            location: location,
+            owner: parking.owner, 
+            deposit: web3.utils.fromWei(parking.price),
+            proof: parking.proof,
+            timeing_hour : timeing_hour,
+            cumulative_cost: cumulative_cost,
+            state: PARK_STATES[parseInt(parking.state)]
+          }
+          normaledOwnedParkings.push(normal)
+        }
+        return normaledOwnedParkings
+      }
+    )
+  
+    return swrRes
+}",获取有的车位
+13,javascript,"export const handler = (web3, provider) => () => {
+
+  const { data, mutate, ...rest } = useSWR(() =>
+    web3 ? ""web3/accounts"" : null,
+    async () => {
+      const accounts = await web3.eth.getAccounts()
+      return accounts[0]
+    }
+  )
+
+  useEffect(() => {
+    provider &&
+    provider.on(""accountsChanged"",
+      accounts => mutate(accounts[0] ?? null)
+    )
+  }, [provider])
+
+
+  return {
+      data,
+      isAdmin: (
+        data &&
+        adminAddresses[web3.utils.keccak256(data)]) ?? false,
+      mutate,
+      ...rest
+  }
+}",获取账户信息
+14,java,"   private void mine(BlockBody blockBody) {
+        Block block = getBlock(blockBody);
+        while (true) {
+            String blockHash = SecurityUtil.sha256Digest(block.toString());
+            if (blockHash.startsWith(MinerUtil.hashPrefixTarget())) {
+                System.out.println(""Mined a new Block! Detail of the new Block : "");
+                System.out.println(block.toString());
+                System.out.println(""And the hash of this Block is : "" + SecurityUtil.sha256Digest(block.toString()) +
+                                    "", you will see the hash value in next Block's preBlockHash field."");
+                System.out.println();
+                blockChain.addNewBlock(block);
+                break;
+            } else {
+                //todo
+                long newNonce = Math.abs(new Random().nextLong());
+                block.getBlockHeader().setNonce(newNonce);
+            }
+        }
+    }
+",模拟执行挖矿操作
+15,java,"public BlockBody getBlockBody(Transaction[] transactions) {
+        assert transactions != null && transactions.length == MiniChainConfig.MAX_TRANSACTION_COUNT;
+        //todo
+        LinkedList<String> hashValues = new LinkedList<>();
+        for (Transaction transaction:transactions){
+            hashValues.add(SecurityUtil.sha256Digest(transaction.toString()));
+        }
+        while(hashValues.size()>1){
+            int length = hashValues.size();
+            for (int i = 0;i<length;i=i+2){
+                String firstHashString = hashValues.poll();
+                String secondHashString = hashValues.poll();
+                hashValues.offer(SecurityUtil.sha256Digest(firstHashString+secondHashString));
+            }
+        }
+        BlockBody newBlockBody = new BlockBody(hashValues.poll(),transactions);
+        return newBlockBody;
+    }",获取区块体
+16,java,"    private boolean check (Transaction[] transactions){
+        for(int i = 0;i< transactions.length;++i){
+            Transaction transaction = transactions[i];
+            byte[] data = SecurityUtil.utxos2Bytes(transaction.getInUtxos(),transaction.getOutUtxos());
+            byte[] sign = transaction.getSendSign();
+            PublicKey publicKey = transaction.getSendPublicKey();
+            if(!SecurityUtil.verify(data,sign,publicKey)){
+                return false;
+            }
+        }
+        return true;
+    }",检查交易是否合法
+17,java,"public void run() {
+        while (true) {
+            synchronized (transactionPool) {
+                while (!transactionPool.isFull()) {
+                    try {
+                        transactionPool.wait();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                // 从交易池中获取一批次的交易
+                Transaction[] transactions = transactionPool.getAll();
+
+                if(!check(transactions)){
+                    System.out.println(""transactions error!"");
+                    System.exit(-1);
+                }
+                // 以交易为参数，调用getBlockBody方法
+                BlockBody blockBody = getBlockBody(transactions);
+
+                // 以blockBody为参数，调用mine方法
+                mine(blockBody);
+                //输出所有账户的余额总数
+                System.out.println(""余额总数: ""+blockChain.getAllAcountAmount());
+
+                transactionPool.notify();
+            }
+        }
+    }",开启区块链
+18,java,"    public Block getBlock(BlockBody blockBody) {
+        //todo
+        long nonce = Math.abs(new Random().nextLong());
+        String merkleRootHash = blockBody.getMerkleRootHash();
+        Block preNode = this.blockChain.getNewestBlock();
+//        BlockBody preBlockBody = preNode.getBlockBody();
+//        String preBlockHash = preBlockBody.getMerkleRootHash();
+        String preBlockHash = SecurityUtil.sha256Digest(preNode.toString());
+        BlockHeader header = new BlockHeader(preBlockHash,merkleRootHash,nonce);
+        Block new_block = new Block(header,blockBody);
+        return new_block;
+    }",获取区块
